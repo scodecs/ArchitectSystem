@@ -45,6 +45,7 @@ venv/
 ENV/
 
 # Project Specific
+extras/
 backend/data/
 *.pdf
 frontend/dist/

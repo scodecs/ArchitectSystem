@@ -37,7 +37,7 @@ app.add_middleware(
 )
 
 # --- Database & Embedding Configuration ---
-POSTGRES_URL = "postgresql+psycopg://postgres:password@localhost:5432/postgres"
+POSTGRES_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://postgres:password@localhost:5432/postgres")
 
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 

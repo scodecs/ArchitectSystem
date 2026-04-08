@@ -48,6 +48,8 @@ const MarkdownComponents = {
   }
 };
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 function App() {
   const [projectId, setProjectId] = useState(localStorage.getItem('projectId') || '');
   const [availableProjects, setAvailableProjects] = useState([]);
@@ -71,7 +73,7 @@ function App() {
 
   useEffect(() => {
     // Fetch available models
-    fetch('http://localhost:8000/api/models')
+    fetch(`${API_BASE_URL}/api/models`)
       .then(res => res.json())
       .then(data => {
         if (data.models && data.models.length > 0) {
@@ -81,7 +83,7 @@ function App() {
       .catch(err => console.error("Could not load models"));
 
     // Fetch existing projects
-    fetch('http://localhost:8000/api/projects')
+    fetch(`${API_BASE_URL}/api/projects`)
       .then(res => res.json())
       .then(data => {
         if (data.projects) {
@@ -124,7 +126,7 @@ function App() {
 
   const fetchProjectState = async (pid) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/project/${pid}`);
+      const res = await fetch(`${API_BASE_URL}/api/project/${pid}`);
       if (res.ok) {
         const data = await res.json();
         setReview({
@@ -170,7 +172,7 @@ function App() {
     formData.append('project_id', newProjectId);
 
     try {
-      const res = await fetch('http://localhost:8000/api/upload', {
+      const res = await fetch(`${API_BASE_URL}/api/upload`, {
         method: 'POST',
         body: formData
       });
@@ -201,7 +203,7 @@ function App() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -227,7 +229,7 @@ function App() {
       if (data.system_updates && data.system_updates.length > 0) {
          setIsCalculating(true);
          try {
-             await fetch(`http://localhost:8000/api/project/${projectId}/evaluate`, {
+             await fetch(`${API_BASE_URL}/api/project/${projectId}/evaluate`, {
                  method: 'POST'
              });
          } catch (e) {
