@@ -1,7 +1,29 @@
 import ReactMarkdown from 'react-markdown';
 import mermaid from 'mermaid';
 import { useState, useEffect, useRef } from 'react';
-import { Upload, FileText, BarChart2, CheckCircle2, ChevronRight, X, Send, Database, Cog } from 'lucide-react';
+import { 
+  Upload, 
+  Settings, 
+  FileText, 
+  Bot, 
+  Download, 
+  CheckCircle2, 
+  AlertCircle, 
+  FileCheck, 
+  Zap, 
+  History, 
+  Layout, 
+  Layers, 
+  MessageSquare, 
+  Eye, 
+  ArrowRight, 
+  Cog,
+  User,
+  CloudOff,
+  Send,
+  BarChart2,
+  Database
+} from 'lucide-react';
 import './App.css';
 
 // Initialize Mermaid for Enterprise Dark Theme
@@ -61,6 +83,11 @@ function App() {
   const [isCalculating, setIsCalculating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   
+  // Mentions State
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState('');
+  const mentionOptions = ['@LiveDocumentation', '@ReviewDocumentation'];
+  
   const [review, setReview] = useState({ ratings: {}, recommendations: [] });
   const [liveDocument, setLiveDocument] = useState('# No Architecture Document Found');
   const [constraints, setConstraints] = useState([]);
@@ -69,7 +96,46 @@ function App() {
 
   const [activeTab, setActiveTab] = useState('review'); // 'review' | 'document'
   const fileInputRef = useRef(null);
-  const messagesEndRef = useRef(null);
+  const chatMessagesRef = useRef(null);
+
+  const highlightTags = (strText, isOverlay = false) => {
+    if (!strText) return null;
+    const parts = strText.split(/(@(?:LiveDocumentation|ReviewDocumentation))/g);
+    return parts.map((part, index) => {
+      if (part === '@LiveDocumentation' || part === '@ReviewDocumentation') {
+        return <span key={index} className={isOverlay ? "tag-highlight" : "msg-tag"}>{part}</span>;
+      }
+      return part;
+    });
+  };
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setInput(val);
+    
+    // Check for mentions
+    const cursorPosition = e.target.selectionStart;
+    const textBeforeCursor = val.slice(0, cursorPosition);
+    const match = textBeforeCursor.match(/@(\w*)$/);
+    
+    if (match) {
+      setShowMentions(true);
+      setMentionFilter(match[1].toLowerCase());
+    } else {
+      setShowMentions(false);
+    }
+  };
+
+  const insertMention = (tag) => {
+    const cursorPosition = input.lastIndexOf('@');
+    if (cursorPosition !== -1) {
+      const newInput = input.substring(0, cursorPosition) + tag + ' ' + input.substring(input.length);
+      setInput(newInput);
+    } else {
+      setInput(input + tag + ' ');
+    }
+    setShowMentions(false);
+  };
 
   useEffect(() => {
     // Fetch available models
@@ -105,7 +171,9 @@ function App() {
   }, [projectId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatMessagesRef.current) {
+      chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+    }
   }, [messages]);
 
   const handleNewProject = () => {
@@ -241,10 +309,26 @@ function App() {
 
     } catch (error) {
       console.error("Chat Error:", error);
-      setMessages(prev => [...prev, { role: 'system', content: 'Connection Error to Backend.' }]);
+      setMessages(prev => [...prev, { role: 'system', content: 'Connection Error to Backend.', isError: true }]);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleExportMarkdown = () => {
+    const blob = new Blob([liveDocument], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Architecture-Document-${projectId}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPDF = () => {
+    window.print();
   };
 
   const renderRatings = () => {
@@ -381,19 +465,7 @@ function App() {
           )}
         </div>
 
-        {constraints.length > 0 && (
-          <div className="constraints-panel">
-            <h3>Active Constraints</h3>
-            <ul>
-              {constraints.map((c, i) => (
-                <li key={i}>
-                  <CheckCircle2 size={14} className="icon-success" />
-                  <span>{c.description}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+
       </aside>
 
       <section className="chat-panel">
@@ -402,7 +474,7 @@ function App() {
         </div>
         
         <div className="chat-interface">
-          <div className="chat-messages">
+          <div className="chat-messages" ref={chatMessagesRef}>
             {messages.length === 0 ? (
               <div className="empty-state">
                 <Cog className="spin-slow" size={48} />
@@ -410,47 +482,81 @@ function App() {
               </div>
             ) : (
               messages.map((msg, idx) => (
-                <div key={idx} className={`message ${msg.role}`}>
-                  {msg.role === 'assistant' ? (
-                    <ReactMarkdown components={MarkdownComponents}>{msg.content}</ReactMarkdown>
-                  ) : (
-                    <p>{msg.content}</p>
-                  )}
-                  {msg.system_updates && (
-                    <div className="system-updates">
-                      {msg.system_updates.map((update, i) => (
-                        <span key={i} className="update-badge">✓ {update}</span>
-                      ))}
-                    </div>
-                  )}
+                <div key={idx} className={`message-wrapper ${msg.role}`}>
+                  <div className="message-icon">
+                    {msg.role === 'user' ? <User size={18} /> : 
+                     msg.role === 'system' ? (msg.isError ? <CloudOff size={18} className="icon-error" /> : <Database size={18} style={{color: '#94a3b8'}} />) : 
+                     <Bot size={18} />}
+                  </div>
+                  <div className="message-bubble">
+                    {msg.role === 'assistant' ? (
+                      <ReactMarkdown components={MarkdownComponents}>{msg.content}</ReactMarkdown>
+                    ) : (
+                      <p style={{ margin: 0 }}>{highlightTags(msg.content, false)}</p>
+                    )}
+                    {msg.system_updates && (
+                      <div className="system-updates">
+                        {msg.system_updates.map((update, i) => (
+                          <span key={i} className="update-badge"> {update}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))
             )}
             {isLoading && <div className="message assistant loading">Typing...</div>}
-            <div ref={messagesEndRef} />
           </div>
           
-          <div className="prompt-pills">
-            {["@LiveDocumentation restructure to standard template", "@LiveDocumentation add missing microservices", "@LiveDocumentation enforce secure zero trust", "@LiveDocumentation migrate to AWS native"].map((pt, i) => (
-              <button key={i} className="pill-btn" onClick={() => setInput(pt)}>{pt}</button>
-            ))}
-          </div>
+          <div className="chat-input-wrapper">
+            <div className="prompt-pills">
+              {[
+                "@ReviewDocumentation: Identify Gaps & Risks",
+                "@ReviewDocumentation: Analyze Scalability",
+                "@LiveDocumentation: Refine Technical English",
+                "@LiveDocumentation: Restructure to SAD (arc42)"
+              ].map((pt, i) => (
+                <button key={i} className="pill-btn" onClick={() => {
+                  const tag = pt.replace(':', '');
+                  setInput(tag + " ");
+                }}>{pt}</button>
+              ))}
+            </div>
 
-          <div className="chat-input-area">
-            <textarea 
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Discuss or ask Copilot to redesign using @LiveDocumentation..."
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-            />
-            <button onClick={sendMessage} disabled={isLoading || !input.trim() || !projectId}>
-              <Send size={18} />
-            </button>
+            <div className="chat-input-area">
+              {showMentions && (
+                <div className="mentions-popup">
+                  {mentionOptions
+                    .filter(opt => opt.toLowerCase().includes(mentionFilter))
+                    .map((opt, idx) => (
+                      <div key={idx} className="mention-item" onClick={() => insertMention(opt)}>
+                        {opt}
+                      </div>
+                  ))}
+                  {mentionOptions.filter(opt => opt.toLowerCase().includes(mentionFilter)).length === 0 && (
+                    <div className="mention-item" style={{color: '#94a3b8', cursor: 'default'}}>No match</div>
+                  )}
+                </div>
+              )}
+              
+              <div className="input-with-highlight">
+                <div className="highlighter-overlay">{highlightTags(input, true)}</div>
+                <textarea 
+                  value={input}
+                  onChange={handleInputChange}
+                  placeholder="Discuss or ask Copilot to redesign using @LiveDocumentation..."
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                />
+              </div>
+              <button className="send-btn" onClick={sendMessage} disabled={isLoading || !input.trim() || !projectId}>
+                <Send size={18} />
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -474,7 +580,12 @@ function App() {
         <div className="workspace-content">
           {activeTab === 'review' && (
             <div className="review-tab">
-              {isCalculating && <div className="calculating-overlay"><div className="spinner"></div><h2>Evaluating Architecture...</h2></div>}
+              {isCalculating && (
+                <div className="calculating-overlay">
+                  <Cog className="spin-slow" size={48} />
+                  <p style={{ marginTop: '16px', fontWeight: '500' }}>Evaluating Design Updates...</p>
+                </div>
+              )}
               <div className="review-summary">
                 <h3>Problem Statement</h3>
                 <p>{review.problem_statement || "N/A"}</p>
@@ -488,7 +599,7 @@ function App() {
                   <div className="recommendations-box">
                     <h4>Key Recommendations</h4>
                     {Array.isArray(review.recommendations) ? review.recommendations.map((rec, idx) => (
-                      <li key={idx} className="recommendation-card">
+                      <li key={idx} className="recommendation-card" style={{ listStyle: 'none' }}>
                         <div className="rec-header">
                            <strong>{rec.title || rec.category || "Recommendation"}</strong>
                         </div>
@@ -511,8 +622,24 @@ function App() {
           )}
 
           {activeTab === 'document' && (
-            <div className="document-tab markdown-body">
-              <ReactMarkdown components={MarkdownComponents}>{liveDocument}</ReactMarkdown>
+            <div className="document-tab">
+              <div className="export-controls" style={{ 
+                display: 'flex', 
+                justifyContent: 'flex-end', 
+                gap: '10px', 
+                marginBottom: '20px' 
+              }}>
+                <button onClick={handleExportMarkdown} className="pill-btn" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Download size={14} /> Export .md
+                </button>
+                <button onClick={handleExportPDF} className="pill-btn" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <FileText size={14} /> Export PDF
+                </button>
+              </div>
+
+              <div className="markdown-body">
+                <ReactMarkdown components={MarkdownComponents}>{liveDocument}</ReactMarkdown>
+              </div>
             </div>
           )}
         </div>
