@@ -1,0 +1,27 @@
+# --- Web Framework & Server ---
+fastapi
+uvicorn
+
+# --- LLM API & Environment ---
+groq
+python-dotenv
+
+# --- PDF Parsing ---
+pypdf
+
+# --- RAG & Vector Ecosystem (LangChain) ---
+langchain-text-splitters
+langchain-huggingface
+langchain-postgres
+sentence-transformers
+
+# --- Database Drivers ---
+psycopg-binary    # PostgreSQL driver (required for pgvector)
+neo4j             # Graph DB driver (for the architectural maps)
+
+# --- Asynchronous Workers & Messaging (DevSecOps Agent) ---
+celery
+redis
+
+# --- ORM ---
+sqlalchemy

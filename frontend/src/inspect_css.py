@@ -1,0 +1,1 @@
+/* Append to App.css dynamically or replace? It's better to just append using a quick tool, or I can view 'e:\Code\ArchitectSystem\frontend\src\App.css' and replace it. Let's append using python script or multi_replace. Let me view App.css first. */
