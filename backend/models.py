@@ -48,3 +48,14 @@ class ProjectArtifact(Base):
     pdf_id = Column(String, unique=True, index=True)
     filename = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(String, primary_key=True, index=True, default=generate_uuid)
+    project_id = Column(String, index=True)
+    role = Column(String) # 'user' or 'assistant' or 'system'
+    content = Column(Text)
+    is_error = Column(JSON, default=False) # Store boolean or error metadata
+    system_updates = Column(JSON, nullable=True) # Store badges
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

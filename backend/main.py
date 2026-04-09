@@ -7,12 +7,14 @@ import uuid # Imported to generate unique pdf_ids
 import json
 from pypdf import PdfReader
 from groq import Groq
+from openai import OpenAI
+from litellm import completion
 from dotenv import load_dotenv
 
 # DB Imports
 from sqlalchemy.orm import Session
 from database import engine, Base, get_db, SessionLocal
-from models import Project, ArchitectureReview, ArchitectureState, ProjectConstraint, ProjectArtifact
+from models import Project, ArchitectureReview, ArchitectureState, ProjectConstraint, ProjectArtifact, ChatMessage
 
 # LangChain & PGVector imports
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -27,6 +29,18 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 client = Groq()
+
+# SiliconFlow Client (OpenAI compatible)
+silicon_client = OpenAI(
+    api_key=os.getenv("SILICON_API_KEY", "sk-your-silicon-key"),
+    base_url="https://api.siliconflow.cn/v1"
+)
+
+# SambaNova Client (OpenAI compatible)
+sambanova_client = OpenAI(
+    api_key=os.getenv("SAMBANOVA_API_KEY", "your-samba-key"),
+    base_url="https://api.sambanova.ai/v1"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -54,6 +68,11 @@ class ChatRequest(BaseModel):
     pdf_ids: list[str] = []
     message: str
     history: list = []
+    model_id: str = "llama-3.3-70b-versatile"
+    provider: str = "Groq"
+
+class EvalRequest(BaseModel):
+    provider: str = "groq"
     model_id: str = "llama-3.3-70b-versatile"
 
 def update_project_summary_bg(project_id: str, old_summary: str, user_msg: str, asst_msg: str):
@@ -86,7 +105,7 @@ def update_project_summary_bg(project_id: str, old_summary: str, user_msg: str, 
     finally:
         db.close()
 
-def generate_architecture_review(text_context: str) -> dict:
+def generate_architecture_review(text_context: str, provider: str = "groq", model_id: str = "llama-3.3-70b-versatile") -> dict:
     system_prompt = (
         "You are an expert software architect. Read the provided architecture text and evaluate it strictly against these Industry Standard Enterprise Frameworks:\n"
         "1. Macro Frameworks: TOGAF, Zachman Framework, and Cloud Well-Architected Frameworks (Operational Excellence, Security, Reliability, Performance Efficiency, Cost Optimization).\n"
@@ -103,26 +122,127 @@ def generate_architecture_review(text_context: str) -> dict:
         "Ratings map to the keys provided and the 'score' is from 1 to 10. For 'rationale', strictly explain why the design received that score. For recommendations, 'detail' explains the action to take in technical depth, and 'why_it_fits' explicitly justifies why it fits the current requirement/use-case perfectly."
     )
     
-    review_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Document context to evaluate:\n{text_context[:25000]}"}
-        ],
-        model="llama-3.3-70b-versatile",
-        temperature=0.2,
-        response_format={"type": "json_object"}
-    )
-    return json.loads(review_completion.choices[0].message.content)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Document context to evaluate:\n{text_context[:25000]}"}
+    ]
+
+    try:
+        content = ""
+        if provider == "siliconflow":
+            resp = silicon_client.chat.completions.create(
+                messages=messages,
+                model=model_id,
+                temperature=0.2,
+                response_format={"type": "json_object"}
+            )
+            content = resp.choices[0].message.content
+        elif provider == "sambanova":
+            resp = sambanova_client.chat.completions.create(
+                messages=messages,
+                model=model_id,
+                temperature=0.1, # Rigorous evaluations benefit from low temp
+                response_format={"type": "json_object"}
+            )
+            content = resp.choices[0].message.content
+        elif provider == "litellm":
+            resp = completion(
+                model=model_id,
+                messages=messages,
+                temperature=0.2,
+                response_format={"type": "json_object"}
+            )
+            content = resp.choices[0].message.content
+        else: # Default Goq
+            resp = client.chat.completions.create(
+                messages=messages,
+                model=model_id,
+                temperature=0.2,
+                response_format={"type": "json_object"}
+            )
+            content = resp.choices[0].message.content
+        
+        return json.loads(content)
+    except Exception as e:
+        print(f"Evaluation model error ({provider}/{model_id}): {e}")
+        # Return a graceful fallback if JSON parsing fails or model errors
+        return {
+            "problem_statement": "Error during evaluation.",
+            "overview": str(e),
+            "ratings": {},
+            "recommendations": []
+        }
 
 @app.get("/api/models")
 async def get_models():
+    # Only return the list of providers. The frontend will fetch models dynamically per provider.
+    return {
+        "providers": [
+            {"id": "groq", "name": "Groq (Hyper-Fast)"},
+            {"id": "siliconflow", "name": "SiliconFlow (OpenSource Expert)"},
+            {"id": "sambanova", "name": "SambaNova Cloud"},
+            {"id": "litellm", "name": "LiteLLM (Universal Gateway)"}
+        ]
+    }
+
+@app.get("/api/models/{provider_id}")
+async def get_provider_models(provider_id: str):
+    provider_id = provider_id.lower()
+    models = []
+    
     try:
-        models = client.models.list()
-        # Filter for models that make sense for this use-case
-        valid_models = [m.id for m in models.data if any(x in m.id for x in ["llama", "gemma", "mixtral"])]
-        return {"models": valid_models}
+        if provider_id == "groq":
+            raw_models = client.models.list()
+            # Filter for text/chat models, exclude whisper
+            models = [{"id": m.id, "name": m.id.replace("-", " ").title()} 
+                     for m in raw_models.data if "whisper" not in m.id]
+        
+        elif provider_id == "siliconflow":
+            raw_models = silicon_client.models.list()
+            # Filter for instruct/reasoning models
+            models = [{"id": m.id, "name": m.id.split('/')[-1].replace("-", " ").title()} 
+                     for m in raw_models.data if ("instruct" in m.id.lower() or "deepseek" in m.id.lower())]
+            
+        elif provider_id == "sambanova":
+            raw_models = sambanova_client.models.list()
+            models = [{"id": m.id, "name": m.id.replace("-", " ").title()} 
+                     for m in raw_models.data if "instruct" in m.id.lower()]
+            
+        elif provider_id == "litellm":
+            # LiteLLM/OpenRouter often too big to list dynamically without heavy latency.
+            # We'll provide a curated "Best of" list for the gateway.
+            models = [
+                {"id": "openrouter/anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet"},
+                {"id": "openrouter/google/gemini-2.0-flash-001", "name": "Gemini 2.0 Flash"},
+                {"id": "openrouter/openai/gpt-4o", "name": "GPT-4o"},
+                {"id": "gpt-4o-mini", "name": "GPT-4o Mini"}
+            ]
+            
+        return {"models": models}
     except Exception as e:
-        return {"models": ["llama-3.3-70b-versatile", "gemma2-9b-it", "mixtral-8x7b-32768"]}
+        print(f"Error fetching models for {provider_id}: {e}")
+        # Fallback to a safe minimum if API fails
+        fallback = {
+            "groq": [{"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B"}],
+            "siliconflow": [{"id": "deepseek-ai/DeepSeek-V3", "name": "DeepSeek V3"}],
+            "sambanova": [{"id": "Meta-Llama-3.1-405B-Instruct", "name": "Llama 3.1 405B"}]
+        }
+        return {"models": fallback.get(provider_id, [])}
+
+@app.post("/api/project")
+async def create_project(data: dict, db: Session = Depends(get_db)):
+    project_id = data.get("project_id")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+        
+    existing = db.query(Project).filter(Project.project_id == project_id).first()
+    if existing:
+        return {"status": "exists", "project_id": project_id}
+        
+    new_project = Project(project_id=project_id)
+    db.add(new_project)
+    db.commit()
+    return {"status": "created", "project_id": project_id}
 
 @app.get("/api/projects")
 async def get_all_projects(db: Session = Depends(get_db)):
@@ -140,6 +260,9 @@ async def get_project_state(project_id: str, db: Session = Depends(get_db)):
     constraints = db.query(ProjectConstraint).filter(ProjectConstraint.project_id == project_id).all()
     artifacts = db.query(ProjectArtifact).filter(ProjectArtifact.project_id == project_id).all()
 
+    history = db.query(ChatMessage).filter(ChatMessage.project_id == project_id).order_by(ChatMessage.created_at.desc()).limit(11).all()
+    history = history[::-1] # chronological order
+    
     return {
         "project_id": project.project_id,
         "review": {
@@ -151,13 +274,16 @@ async def get_project_state(project_id: str, db: Session = Depends(get_db)):
         "live_document": state.content if state else "# No Architecture Document Found",
         "constraints": [{"description": c.description, "reason": c.reason} for c in constraints],
         "artifacts": [{"pdf_id": a.pdf_id, "filename": a.filename} for a in artifacts],
-        "running_summary": project.running_summary
+        "running_summary": project.running_summary,
+        "history": [{"role": m.role, "content": m.content, "isError": m.is_error, "system_updates": m.system_updates} for m in history]
     }
 
 @app.post("/api/upload")
 async def upload_document(
     project_id: str = Form(...),
     file: UploadFile = File(...),
+    provider: str = Form("groq"),
+    model_id: str = Form("llama-3.3-70b-versatile"),
     db: Session = Depends(get_db)
 ):
     try:
@@ -189,7 +315,7 @@ async def upload_document(
             db.commit()
 
         # Step: Initial Review Generation
-        review_data = generate_architecture_review(full_text)
+        review_data = generate_architecture_review(full_text, provider=provider, model_id=model_id)
         
         # Save Review
         new_review = ArchitectureReview(
@@ -228,13 +354,13 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/project/{project_id}/evaluate")
-async def evaluate_project(project_id: str, db: Session = Depends(get_db)):
+async def evaluate_project(project_id: str, request: EvalRequest, db: Session = Depends(get_db)):
     state = db.query(ArchitectureState).filter(ArchitectureState.project_id == project_id).order_by(ArchitectureState.created_at.desc()).first()
     if not state or not state.content:
         raise HTTPException(status_code=400, detail="No architecture document available to evaluate.")
 
     try:
-        review_data = generate_architecture_review(state.content)
+        review_data = generate_architecture_review(state.content, provider=request.provider, model_id=request.model_id)
         new_review = ArchitectureReview(
             project_id=project_id,
             ratings={
@@ -251,12 +377,37 @@ async def evaluate_project(project_id: str, db: Session = Depends(get_db)):
         print(f"Error in evaluate: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/project/{project_id}")
+async def delete_project(project_id: str, db: Session = Depends(get_db)):
+    try:
+        # Cascading delete across all tables
+        db.query(ChatMessage).filter(ChatMessage.project_id == project_id).delete()
+        db.query(ArchitectureReview).filter(ArchitectureReview.project_id == project_id).delete()
+        db.query(ArchitectureState).filter(ArchitectureState.project_id == project_id).delete()
+        db.query(ProjectConstraint).filter(ProjectConstraint.project_id == project_id).delete()
+        db.query(ProjectArtifact).filter(ProjectArtifact.project_id == project_id).delete()
+        db.query(Project).filter(Project.project_id == project_id).delete()
+        
+        # Note: Vector store entries might still exist, ideally we should clean up PGVector by project_id too 
+        # but the standard filter will handle it if we specify it.
+        
+        db.commit()
+        return {"status": "success", "message": f"Project {project_id} and all associated data deleted."}
+    except Exception as e:
+        db.rollback()
+        print(f"Error in delete_project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/chat")
 async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     try:
         search_filter = {"project_id": request.project_id}
         if request.pdf_ids and len(request.pdf_ids) > 0:
             search_filter["pdf_id"] = {"$in": request.pdf_ids}
+
+        # Persist User Message
+        db.add(ChatMessage(project_id=request.project_id, role='user', content=request.message))
+        db.commit()
 
         # Check if project has artifacts before querying PGVector
         artifacts_exist = db.query(ProjectArtifact).filter(ProjectArtifact.project_id == request.project_id).first()
@@ -300,7 +451,15 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
             )
         }
 
-        messages = [system_message] + request.history + [{"role": "user", "content": request.message}]
+        # Sanitize history to only include 'role' and 'content' for the LLM API
+        sanitized_history = []
+        for m in request.history:
+            if isinstance(m, dict) and "role" in m and "content" in m:
+                # API specifically forbids extra fields like 'isError' or 'system_updates'
+                msg = {"role": m["role"], "content": m["content"]}
+                sanitized_history.append(msg)
+
+        messages = [system_message] + sanitized_history + [{"role": "user", "content": request.message}]
 
         update_tool = {
             "type": "function",
@@ -349,22 +508,63 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
             tools.append(update_tool)
             tool_choice = {"type": "function", "function": {"name": "update_architecture_document"}}
 
-        chat_completion = client.chat.completions.create(
-            messages=messages,
-            model=request.model_id,
-            temperature=0.3,
-            max_tokens=3000,
-            tools=tools,
-            tool_choice=tool_choice
-        )
+        # Determine which client to use
+        current_client = client
+        prov_lower = request.provider.lower()
+        
+        if prov_lower == "siliconflow":
+            current_client = silicon_client
+        elif prov_lower == "sambanova":
+            current_client = sambanova_client
+        
+        if prov_lower == "litellm":
+            # LiteLLM routing
+            chat_completion = completion(
+                model=request.model_id,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=0.3,
+                max_tokens=3000
+            )
+        else:
+            # Direct SDK routing
+            chat_completion = current_client.chat.completions.create(
+                messages=messages,
+                model=request.model_id,
+                temperature=0.3,
+                max_tokens=3000,
+                tools=tools,
+                tool_choice=tool_choice
+            )
 
         response_message = chat_completion.choices[0].message
         
         # Check if the model decided to use a tool
         updates_made = []
         if response_message.tool_calls:
+            # First, append the assistant's message that contains the tool calls
+            messages.append(response_message)
+            
             for tool_call in response_message.tool_calls:
-                args = json.loads(tool_call.function.arguments)
+                raw_args = tool_call.function.arguments
+                args = {}
+                try:
+                    # Attempt standard parse first
+                    args = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    # Recovery: Strip garbage tags like </function> or trailing chars
+                    try:
+                        # Find the first { and last }
+                        start = raw_args.find('{')
+                        end = raw_args.rfind('}')
+                        if start != -1 and end != -1:
+                            args = json.loads(raw_args[start:end+1])
+                        else:
+                            print(f"CRITICAL: Unparseable tool arguments for {tool_call.function.name}: {raw_args}")
+                    except Exception as e:
+                        print(f"Failed to recover JSON for {tool_call.function.name}: {e}")
+
                 if tool_call.function.name == "update_architecture_document":
                     new_doc = args.get("markdown_content")
                     if new_doc:
@@ -379,27 +579,47 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
                         db.commit()
                         updates_made.append(f"Recorded new constraint: {desc}")
 
-            # Optionally, ask the LLM to generate a textual reply based on the tool execution
-            messages.append(response_message)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": response_message.tool_calls[0].id,
-                "name": response_message.tool_calls[0].function.name,
-                "content": json.dumps({"status": "success", "updates": updates_made})
-            })
+                # MANDATORY: Every tool call must have a corresponding tool response message
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "content": json.dumps({"status": "success", "updates": updates_made})
+                })
+
+            if prov_lower == "litellm":
+                final_completion = completion(
+                    messages=messages,
+                    model=request.model_id,
+                    temperature=0.3,
+                    max_tokens=1000,
+                )
+            else:
+                final_completion = current_client.chat.completions.create(
+                    messages=messages,
+                    model=request.model_id,
+                    temperature=0.3,
+                    max_tokens=1000,
+                )
             
-            final_completion = client.chat.completions.create(
-                messages=messages,
-                model=request.model_id,
-                temperature=0.3,
-                max_tokens=1000,
-            )
-            final_content = final_completion.choices[0].message.content
+            final_content = final_completion.choices[0].message.content or "Update processed successfully."
+            # Persist Assistant Message
+            db.add(ChatMessage(
+                project_id=request.project_id, 
+                role='assistant', 
+                content=final_content, 
+                system_updates=updates_made
+            ))
+            db.commit()
             
             background_tasks.add_task(update_project_summary_bg, request.project_id, project.running_summary if project else None, request.message, final_content)
             
             return {"role": "assistant", "content": final_content, "system_updates": updates_made}
             
+        # Persist Assistant Message (non-tool)
+        db.add(ChatMessage(project_id=request.project_id, role='assistant', content=response_message.content))
+        db.commit()
+
         background_tasks.add_task(update_project_summary_bg, request.project_id, project.running_summary if project else None, request.message, response_message.content)
 
         return {
@@ -410,6 +630,9 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
 
     except Exception as e:
         print(f"Error in chat: {e}")
+        # Persist Error Message
+        db.add(ChatMessage(project_id=request.project_id, role='system', content='Connection Error to Backend.', is_error=True))
+        db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

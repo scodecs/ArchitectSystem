@@ -1,52 +1,26 @@
-# Why Your Architecture Document is Dying (and How to Save It) 🚀
+# Building ArchReview AI: The Journey to a Resilient Architecture Copilot
 
-Every Software Architect knows the "Post-Whiteboard Blues." 
+ArchReview AI started as a vision to bridge the gap between static architecture diagrams and live, evolving systems. In the enterprise world, documentation often rots the moment it is committed. We set out to build a system that evaluates design documents across key enterprise categories (Scalability, Security, Performance) and provides an interactive copilot to keep the documentation "breathing."
 
-You've just finished a brilliant 2-hour session. Your system is scalable, your microservices are perfectly decoupled, and your event flow is a thing of beauty. But then comes the dread: **Updating the Software Architecture Document (SAD).**
+## The Core Philosophy
+The system is built on a "Review-Refine-Repeat" loop:
+1.  **Expert Evaluation**: Automating the initial audit using TOGAF and Well-Architected Framework principles.
+2.  **Live Documentation**: Enabling a conversational interface to mandate changes (e.g., "Add a caching layer") and watching the live SAD (Software Architecture Document) update in real-time.
+3.  **Cross-Model Intelligence**: Utilizing the best-of-breed LLMs from Groq, SiliconFlow, and SambaNova via a dynamic discovery engine.
 
-Markdown tables. Mermaid diagrams. Copy-pasting bullet points into a Confluence page that will be out of date by next Tuesday. It's the highest-value work with the lowest-value experience.
+## Overcoming Technical Challenges
+During development, we solved several critical issues:
+- **Dynamic Discovery**: We moved away from hardcoded model lists to a live system that fetches active models directly from provider APIs.
+- **Strict Project Isolation**: Implementing a strict refresh policy to ensure data integrity across multiple workstreams.
+- **Parsing Resilience**: Hardening the chat interface to handle malformed tool calls and "garbage" output from high-performance models.
 
-That’s why we built **ArchReview AI**.
+This project demonstrates the power of RAG when combined with explicit state management and multi-model orchestration.
 
-![ArchReview AI in Action](file:///C:/Users/scodee/.gemini/antigravity/brain/c1b86f15-1905-460d-a164-31517e18c5a4/archreview_ai_final_demo_1775659077712.webp)
+## Knowledge-First Architecture
+The core experience is built around a unified knowledge stream:
+- **RAG Ingestion**: Establishes a baseline system context from your technical PDFs.
+- **Specialized Personas**: Toggle between `@ReviewDocumentation` for red-team audits and `@LiveDocumentation` for automated technical writing.
+- **Automated Auditing**: Health scores are calculated across enterprise pillars (Scalability, Security, Performance).
 
----
-
-## 🏗️ Stop Writing. Start Designing.
-
-ArchReview AI is a professional co-pilot that turns documentation from a "chore" into a "side-effect." We wanted to build something that felt less like a chatbot and more like sitting next to a **Principal Engineer**.
-
-### How it solves the "SAD" Problem:
-
-1. **The Automated Audit**: While you chat, the system is continuously auditing your design against "The Big Five" pillars:
-   - **DDD** (Domain-Driven Design)
-   - **Zero Trust Security**
-   - **Microservices & EDA**
-   - **Clean Architecture**
-   - **Well-Architected Frameworks** (TOGAF/AWS)
-
-If you miss a circuit breaker or skip an idempotency check, the system flags it in your **Diagnostic Review** dashboard before a single line of code is written.
-
-2. **The Dual-Persona Workflow**: We introduced **Smart Mentions**. 
-   - Need a critical "red-team" review? Tag `@ReviewDocumentation`. It’s your strictly technical critic.
-   - Ready to update the specs? Tag `@LiveDocumentation`. It’s your expert technical writer.
-
-### 🛠️ Built for the Modern Architect
-
-We didn't compromise on the tech stack.
-- **Ultra-Low Latency**: Powered by **Groq** and **Llama-3.3-70b**, giving you near-instantaneous architectural reasoning.
-- **RAG-Infused Context**: The AI actually *reads* your existing project documents (PDFs/MDs) to establish its baseline.
-- **Rich Visualization**: Automated **Mermaid.js** rendering means your sequence diagrams and component views update themselves.
-
-## 📈 The ROI of "Review-First" Design
-
-Catching an architectural flaw in the design phase is **100 times cheaper** than fixing it after it causes a cascading failure in production. ArchReview AI doesn't just save you time; it saves your system from technical debt.
-
-Architecture shouldn't be static. It should be an evolving conversation. 
-
-**Ready to give your architecture the co-pilot it deserves?**
-
-Check out the full overview at [PROJECT_OVERVIEW.md](file:///e:/Code/ArchitectSystem/PROJECT_OVERVIEW.md).
-
----
-*Follow our journey to automate the rigour of engineering on [GitHub](https://github.com/scodecs/ArchitectSystem.git).*
+## Business Impact
+ArchReview AI isn't just a chat box; it's a tool for reducing architectural debt. Catching a scalability gap during design is magnitudes cheaper than refactoring after a production incident. By automating the "SAD Overhead," architecture documents become a side-effect of the discussion, not a manual burden.

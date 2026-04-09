@@ -22,7 +22,9 @@ import {
   CloudOff,
   Send,
   BarChart2,
-  Database
+  Database,
+  Trash2,
+  Info
 } from 'lucide-react';
 import './App.css';
 
@@ -73,10 +75,15 @@ const MarkdownComponents = {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 function App() {
-  const [projectId, setProjectId] = useState(localStorage.getItem('projectId') || '');
+  const [projectId, setProjectId] = useState('');
   const [availableProjects, setAvailableProjects] = useState([]);
-  const [modelId, setModelId] = useState('llama-3.3-70b-versatile');
-  const [models, setModels] = useState(['llama-3.3-70b-versatile', 'gemma2-9b-it', 'mixtral-8x7b-32768']);
+  const [providerId, setProviderId] = useState(() => (localStorage.getItem('providerId') || 'groq').toLowerCase());
+  const [modelId, setModelId] = useState(() => localStorage.getItem('modelId') || 'llama-3.3-70b-versatile');
+  const [providers, setProviders] = useState([]);
+  const [models, setModels] = useState([]);
+  const [isModelsLoading, setIsModelsLoading] = useState(false);
+  const [isProjectCreated, setIsProjectCreated] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState('workspace'); // 'workspace' | 'artefacts'
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -95,6 +102,7 @@ function App() {
   const [selectedArtifacts, setSelectedArtifacts] = useState([]);
 
   const [activeTab, setActiveTab] = useState('review'); // 'review' | 'document'
+  const [runningSummary, setRunningSummary] = useState('');
   const fileInputRef = useRef(null);
   const chatMessagesRef = useRef(null);
 
@@ -137,16 +145,36 @@ function App() {
     setShowMentions(false);
   };
 
+  const fetchModelsForProvider = async (pid) => {
+    setIsModelsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/models/${pid}`);
+      const data = await res.json();
+      if (data.models && data.models.length > 0) {
+        setModels(data.models);
+        // Only auto-select if current modelId is not in the new list
+        if (!data.models.find(m => m.id === modelId)) {
+          setModelId(data.models[0].id);
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching models", e);
+    }
+    setIsModelsLoading(false);
+  };
+
   useEffect(() => {
-    // Fetch available models
+    // Fetch available providers
     fetch(`${API_BASE_URL}/api/models`)
       .then(res => res.json())
       .then(data => {
-        if (data.models && data.models.length > 0) {
-          setModels(data.models);
+        if (data.providers) {
+          setProviders(data.providers);
+          // Fetch initial models for the current providerId
+          fetchModelsForProvider(providerId);
         }
       })
-      .catch(err => console.error("Could not load models"));
+      .catch(err => console.error("Could not load providers"));
 
     // Fetch existing projects
     fetch(`${API_BASE_URL}/api/projects`)
@@ -154,10 +182,9 @@ function App() {
       .then(data => {
         if (data.projects) {
           setAvailableProjects(data.projects);
-          // Auto-select if nothing in local storage but projects exist
-          if (!localStorage.getItem('projectId') && data.projects.length > 0) {
-            setProjectId(data.projects[0]);
-          }
+          // Only populate list, do NOT auto-select on refresh - strict policy
+          setIsProjectCreated(false);
+          setProjectId('');
         }
       })
       .catch(err => console.error("Could not load projects"));
@@ -166,9 +193,22 @@ function App() {
   useEffect(() => {
     if (projectId) {
       localStorage.setItem('projectId', projectId);
+      // Check if project exists and hydrate
       fetchProjectState(projectId);
+      setIsProjectCreated(true);
+    } else {
+      setIsProjectCreated(false);
     }
   }, [projectId]);
+
+  // PERSIST SETTINGS ON CHANGE
+  useEffect(() => {
+    if (modelId) localStorage.setItem('modelId', modelId);
+  }, [modelId]);
+
+  useEffect(() => {
+    if (providerId) localStorage.setItem('providerId', providerId);
+  }, [providerId]);
 
   useEffect(() => {
     if (chatMessagesRef.current) {
@@ -176,19 +216,33 @@ function App() {
     }
   }, [messages]);
 
-  const handleNewProject = () => {
+  const handleNewProject = async () => {
     const freshId = 'PROJ-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-    setProjectId(freshId);
-    setReview({ ratings: {}, recommendations: [] });
-    setLiveDocument('# New Architecture Document\n\nPlease upload an architecture PDF or start describing your system to begin.');
-    setConstraints([]);
-    setArtifacts([]);
-    setSelectedArtifacts([]);
-    setMessages([{ role: 'system', content: `Started new project workspace: ${freshId}` }]);
-    localStorage.setItem('projectId', freshId);
     
-    if (!availableProjects.includes(freshId)) {
-      setAvailableProjects([freshId, ...availableProjects]);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/project`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: freshId })
+      });
+      const data = await res.json();
+      
+      if (data.status === 'created' || data.status === 'exists') {
+        setProjectId(freshId);
+        setIsProjectCreated(true);
+        setReview({ ratings: {}, recommendations: [] });
+        setLiveDocument('# New Architecture Document\n\nPlease upload an architecture PDF or start describing your system to begin.');
+        setConstraints([]);
+        setArtifacts([]);
+        setSelectedArtifacts([]);
+        setMessages([{ role: 'system', content: `Workspace initialized for project ${freshId}.` }]);
+        
+        if (!availableProjects.includes(freshId)) {
+          setAvailableProjects([freshId, ...availableProjects]);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to create project:", err);
     }
   };
 
@@ -208,17 +262,46 @@ function App() {
         
         const fetchedArtifacts = data.artifacts || [];
         setArtifacts(fetchedArtifacts);
-        // By default, select all retrieved artifacts if we haven't manipulated selection manually
         setSelectedArtifacts(fetchedArtifacts.map(a => a.pdf_id));
 
-        if (data.running_summary) {
-          setMessages([{ role: 'system', content: `*Context Recovered:*\n\n${data.running_summary}` }]);
+        // Hydrate History and Pinned Summary
+        if (data.history && data.history.length > 0) {
+          setMessages(data.history);
         } else {
-          setMessages([{ role: 'system', content: `Workspace connected.` }]);
+          setMessages([{ role: 'system', content: `Workspace initialized for project ${pid}. Upload architecture to begin.` }]);
         }
+
+        setRunningSummary(data.running_summary || '');
       }
     } catch (e) {
       console.error("Failed to fetch project state");
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectId) return;
+    if (!window.confirm(`Are you sure you want to delete Project ${projectId}? This action is permanent and will wipe all associated architectural data.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/project/${projectId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const remaining = availableProjects.filter(id => id !== projectId);
+        setAvailableProjects(remaining);
+        if (remaining.length > 0) {
+          setProjectId(remaining[0]);
+        } else {
+          handleNewProject();
+        }
+      } else {
+        alert("Failed to delete project.");
+      }
+    } catch (err) {
+      console.error("Delete Project Error:", err);
+      alert("Error deleting project.");
     }
   };
 
@@ -238,6 +321,8 @@ function App() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('project_id', newProjectId);
+    formData.append('provider', providerId);
+    formData.append('model_id', modelId);
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/upload`, {
@@ -277,8 +362,9 @@ function App() {
         body: JSON.stringify({ 
           project_id: projectId,
           message: input, 
-          history: messages,
+          history: messages.slice(-10),
           model_id: modelId,
+          provider: providerId,
           pdf_ids: selectedArtifacts
         }),
       });
@@ -296,11 +382,16 @@ function App() {
 
       if (data.system_updates && data.system_updates.length > 0) {
          setIsCalculating(true);
-         try {
-             await fetch(`${API_BASE_URL}/api/project/${projectId}/evaluate`, {
-                 method: 'POST'
-             });
-         } catch (e) {
+          try {
+              await fetch(`${API_BASE_URL}/api/project/${projectId}/evaluate`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      provider: providerId,
+                      model_id: modelId
+                  })
+              });
+          } catch (e) {
              console.error("Evaluation trigger failed", e);
          }
          setIsCalculating(false);
@@ -370,97 +461,141 @@ function App() {
           <h2>ArchReview AI</h2>
         </div>
 
-        <div className="settings-panel">
-          <div className="input-group">
-            <label>Current Project</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <select 
-                value={projectId} 
-                onChange={e => {
-                  setProjectId(e.target.value);
-                  setMessages([]);
-                }}
-                style={{ flex: 1 }}
-              >
-                {projectId && !availableProjects.includes(projectId) && (
-                  <option value={projectId}>{projectId}</option>
-                )}
-                <option value="" disabled>Select a project...</option>
-                {availableProjects.map(pid => (
-                  <option key={pid} value={pid}>{pid}</option>
-                ))}
-              </select>
-              <button 
-                onClick={handleNewProject}
-                style={{
-                  background: 'var(--accent-primary)',
-                  border: 'none',
-                  color: 'white',
-                  padding: '0 12px',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '12px',
-                  fontWeight: 600
-                }}
-                title="Create New Project"
-              >
-                New
-              </button>
-            </div>
-          </div>
-
-          <div className="input-group">
-            <label>Language Model</label>
-            <select value={modelId} onChange={e => setModelId(e.target.value)}>
-              {models.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
+        <div className="sidebar-nav">
+          <button 
+            className={`sidebar-nav-item ${sidebarTab === 'workspace' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('workspace')}
+          >
+            <Layout size={16} /> Workspace
+          </button>
+          <button 
+            className={`sidebar-nav-item ${sidebarTab === 'artefacts' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('artefacts')}
+          >
+            <Layers size={16} /> Artefacts
+          </button>
         </div>
 
-        <div className="upload-zone" onClick={() => fileInputRef.current?.click()}>
-          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf" hidden />
-          <Upload size={32} />
-          <p>{isUploading ? "Processing..." : "Upload Architecture (PDF)"}</p>
-        </div>
+        <div className="sidebar-content">
+          {sidebarTab === 'workspace' && (
+            <>
+              <div className="settings-panel">
+                <div className="input-group">
+                  <label>Current Project</label>
+                  <div className="project-header">
+                    <select 
+                      value={projectId} 
+                      onChange={e => setProjectId(e.target.value)}
+                      style={{ flex: 1 }}
+                    >
+                      {projectId && !availableProjects.includes(projectId) && (
+                        <option value={projectId}>{projectId}</option>
+                      )}
+                      <option value="" disabled>Select a project...</option>
+                      {availableProjects.map(pid => (
+                        <option key={pid} value={pid}>{pid}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="project-button-stack">
+                    <button 
+                      onClick={handleNewProject}
+                      className="action-btn-wide"
+                      title="Create New Project"
+                    >
+                      Create New Project
+                    </button>
+                    <button 
+                      onClick={handleDeleteProject}
+                      className="delete-project-btn-wide"
+                      title="Delete Current Project"
+                      disabled={!projectId}
+                    >
+                      <Trash2 size={16} /> Delete Project
+                    </button>
+                  </div>
+                </div>
 
-        <div className="artifacts-panel">
-          <h3>Project Artefacts</h3>
-          {artifacts.length === 0 ? (
-            <p className="empty-artifacts">No artefact is uploaded. You can upload a design or start completely from scratch.</p>
-          ) : (
-            <div className="artifacts-list">
-              <label className="artifact-checkbox select-all">
-                <input 
-                  type="checkbox" 
-                  checked={selectedArtifacts.length === artifacts.length}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setSelectedArtifacts(artifacts.map(a => a.pdf_id));
-                    } else {
-                      setSelectedArtifacts([]);
-                    }
-                  }}
-                />
-                <span className="truncate">Select All</span>
-              </label>
-              {artifacts.map((art) => (
-                <label key={art.pdf_id} className="artifact-checkbox">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedArtifacts.includes(art.pdf_id)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedArtifacts([...selectedArtifacts, art.pdf_id]);
-                      } else {
-                        setSelectedArtifacts(selectedArtifacts.filter(id => id !== art.pdf_id));
-                      }
-                    }}
-                  />
-                  <span className="truncate" title={art.filename}>{art.filename}</span>
-                </label>
-              ))}
+                <div className="dual-dropdown-group">
+                  <div className="input-group">
+                    <label>Provider</label>
+                    <select value={providerId} onChange={e => {
+                      const pid = e.target.value;
+                      setProviderId(pid);
+                      fetchModelsForProvider(pid);
+                    }}>
+                      {providers.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="input-group">
+                    <label>Model</label>
+                    <select value={modelId} onChange={e => setModelId(e.target.value)} disabled={isModelsLoading}>
+                      {isModelsLoading ? (
+                        <option>Fetching models...</option>
+                      ) : (
+                        models.map(m => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div 
+                className={`upload-zone ${!isProjectCreated ? 'zone-disabled' : ''}`} 
+                onClick={() => isProjectCreated && fileInputRef.current?.click()}
+              >
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf" hidden />
+                <Upload size={32} />
+                <p>{isUploading ? "Processing..." : isProjectCreated ? "Upload Architecture (PDF)" : "Create a project to upload"}</p>
+              </div>
+            </>
+          )}
+
+          {sidebarTab === 'artefacts' && (
+            <div className="artifacts-panel">
+              <div className="panel-header">
+                <h3>Project Artefacts</h3>
+              </div>
+              {artifacts.length === 0 ? (
+                <p className="empty-artifacts">No artefact is uploaded. You can upload a design or start completely from scratch.</p>
+              ) : (
+                <div className="artifacts-list">
+                  <label className="artifact-checkbox select-all">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedArtifacts.length === artifacts.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedArtifacts(artifacts.map(a => a.pdf_id));
+                        } else {
+                          setSelectedArtifacts([]);
+                        }
+                      }}
+                    />
+                    <span className="truncate">Select All</span>
+                  </label>
+                  {artifacts.map((art) => (
+                    <label key={art.pdf_id} className="artifact-checkbox">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedArtifacts.includes(art.pdf_id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedArtifacts([...selectedArtifacts, art.pdf_id]);
+                          } else {
+                            setSelectedArtifacts(selectedArtifacts.filter(id => id !== art.pdf_id));
+                          }
+                        }}
+                      />
+                      <span className="truncate" title={art.filename}>{art.filename}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -474,6 +609,14 @@ function App() {
         </div>
         
         <div className="chat-interface">
+          {runningSummary && (
+            <div className="pinned-summary">
+              <h4><Info size={14} /> Project Running Summary</h4>
+              <div className="markdown-body">
+                <ReactMarkdown>{runningSummary}</ReactMarkdown>
+              </div>
+            </div>
+          )}
           <div className="chat-messages" ref={chatMessagesRef}>
             {messages.length === 0 ? (
               <div className="empty-state">
@@ -509,17 +652,25 @@ function App() {
           </div>
           
           <div className="chat-input-wrapper">
-            <div className="prompt-pills">
+            <div className={`prompt-pills ${!isProjectCreated ? 'zone-disabled' : ''}`}>
               {[
                 "@ReviewDocumentation: Identify Gaps & Risks",
                 "@ReviewDocumentation: Analyze Scalability",
                 "@LiveDocumentation: Refine Technical English",
                 "@LiveDocumentation: Restructure to SAD (arc42)"
               ].map((pt, i) => (
-                <button key={i} className="pill-btn" onClick={() => {
-                  const tag = pt.replace(':', '');
-                  setInput(tag + " ");
-                }}>{pt}</button>
+                <button 
+                  key={i} 
+                  className="pill-btn" 
+                  disabled={!isProjectCreated}
+                  onClick={() => {
+                    if (!isProjectCreated) return;
+                    const tag = pt.replace(':', '');
+                    setInput(tag + " ");
+                  }}
+                >
+                  {pt}
+                </button>
               ))}
             </div>
 
@@ -539,21 +690,22 @@ function App() {
                 </div>
               )}
               
-              <div className="input-with-highlight">
+              <div className={`input-with-highlight ${!isProjectCreated ? 'zone-disabled' : ''}`}>
                 <div className="highlighter-overlay">{highlightTags(input, true)}</div>
                 <textarea 
                   value={input}
                   onChange={handleInputChange}
-                  placeholder="Discuss or ask Copilot to redesign using @LiveDocumentation..."
+                  disabled={!isProjectCreated || isLoading}
+                  placeholder={isProjectCreated ? "Discuss or ask Copilot to redesign using @LiveDocumentation..." : "Select or create a project to start chatting..."}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    if (e.key === 'Enter' && !e.shiftKey && isProjectCreated) {
                       e.preventDefault();
                       sendMessage();
                     }
                   }}
                 />
               </div>
-              <button className="send-btn" onClick={sendMessage} disabled={isLoading || !input.trim() || !projectId}>
+              <button className="send-btn" onClick={sendMessage} disabled={isLoading || !input.trim() || !isProjectCreated}>
                 <Send size={18} />
               </button>
             </div>
@@ -580,17 +732,47 @@ function App() {
         <div className="workspace-content">
           {activeTab === 'review' && (
             <div className="review-tab">
+              <div className="review-header">
+                <h3>Live Diagnosis</h3>
+                <button 
+                  className={`diag-btn-tiny ${isCalculating ? 'loading' : ''}`}
+                  onClick={async () => {
+                    if (!projectId) return;
+                    setIsCalculating(true);
+                    try {
+                      await fetch(`${API_BASE_URL}/api/project/${projectId}/evaluate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ provider: providerId, model_id: modelId })
+                      });
+                      await fetchProjectState(projectId);
+                    } catch (e) {
+                      console.error("Manual evaluation failed", e);
+                    }
+                    setIsCalculating(false);
+                  }}
+                  disabled={!projectId || isCalculating}
+                >
+                  <Zap size={14} /> {isCalculating ? "Evaluating..." : "Run Diagnostic"}
+                </button>
+              </div>
+
               {isCalculating && (
                 <div className="calculating-overlay">
                   <Cog className="spin-slow" size={48} />
                   <p style={{ marginTop: '16px', fontWeight: '500' }}>Evaluating Design Updates...</p>
                 </div>
               )}
-              <div className="review-summary">
-                <h3>Problem Statement</h3>
-                <p>{review.problem_statement || "N/A"}</p>
-                <h3>Architectural Overview</h3>
-                <p>{review.overview || "N/A"}</p>
+              <div className="review-indented-content">
+                <div className="review-section">
+                  <h4>Problem Statement</h4>
+                  <p>{review.problem_statement || "N/A"}</p>
+                </div>
+                
+                <div className="review-section">
+                  <h4>Architectural Overview</h4>
+                  <p>{review.overview || "N/A"}</p>
+                </div>
               </div>
 
               {Object.keys(review.ratings || {}).length > 0 ? (

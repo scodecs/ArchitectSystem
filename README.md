@@ -1,67 +1,52 @@
-# Robust Software Architecture Design Review System
+# ArchReview AI - Enterprise Architecture Copilot
 
-This project is a Retrieval-Augmented Generation (RAG) system built to serve as an expert architectural assistant. It allows users to upload architecture documents (PDFs), evaluates the architecture automatically across several key enterprise categories, and provides an interactive copilot to refine and continuously update a live Architecture Document.
+ArchReview AI is a Retrieval-Augmented Generation (RAG) system designed to serve as an expert architectural assistant. It automates the evaluation of design documents (PDFs) and provides an interactive copilot to continuously refine a "Live Architecture Document."
+
+## Key Features
+- **Multi-Provider Discovery**: Dynamically switch between Groq, SiliconFlow, SambaNova Cloud, and LiteLLM/OpenRouter.
+- **Dynamic Model Discovery**: Real-time fetching of active AI models directly from provider APIs.
+- **Expert Audit**: Automated diagnostic reviews covering Scalability, Security, Performance, and Operational Excellence.
+- **Live Document Refinement**: Use `@LiveDocumentation` in chat to update your system design on the fly.
+- **Persistent Workspace**: Full state recovery powered by PostgreSQL and PGVector.
 
 ## Prerequisites
+- **Node.js**: version 18+
+- **Python**: version 3.10+
+- **PostgreSQL**: Running on port `5432` with the `pgvector` extension.
 
-Before running the application, ensure you have the following installed:
-- **Node.js**: version 18+ (for running the React frontend)
-- **Python**: version 3.10+ (for the FastAPI backend)
-- **PostgreSQL**: Running locally on port `5432` with the `pgvector` extension installed.
-    - Default credentials expected: User `postgres`, Password `password`, DB name `postgres`.
+## Setup Instructions
 
-## Step 1: Environment Variables Setup
-
-Ensure you have a `.env` file located in the root or `backend/` directory containing your Groq API Key:
-
+### 1. Environment Configuration
+Create a `.env` file in the root or `backend/` directory based on the `.env.example` provided:
 ```env
-GROQ_API_KEY=your_groq_api_key_here
+GROQ_API_KEY=your_key
+SILICON_API_KEY=your_key
+SAMBANOVA_API_KEY=your_key
+OPENROUTER_API_KEY=your_key
+DATABASE_URL=postgresql://user:password@localhost:5432/postgres
 ```
 
-## Step 2: Running the Backend
+### 2. Run the Backend (FastAPI)
+```bash
+cd backend
+python -m venv .venv
+# Activate venv: .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
 
-The backend is built with FastAPI, Langchain, and SQLAlchemy. It runs within a Python virtual environment.
+### 3. Run the Frontend (React/Vite)
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-1. Open a terminal and navigate to the `backend` directory.
-   ```bash
-   cd backend
-   ```
-2. Activate your virtual environment:
-   - **Windows PowerShell**: `.\.venv\Scripts\Activate.ps1`
-   - **Windows CMD**: `.\.venv\Scripts\activate.bat`
-   - **Mac/Linux**: `source .venv/bin/activate`
-3. If dependencies are missing, install them:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Start the FastAPI server using Uvicorn:
-   ```bash
-   uvicorn main:app --reload
-   ```
-   *The backend will now be running at `http://localhost:8000` and automatically configure database tables on startup.*
+## Usage Workflow
+1. **Initialize**: Select or Create a Project from the sidebar.
+2. **Configure Engine**: Choose your preferred AI Provider and Model.
+3. **Analyze**: Upload an Architecture PDF to trigger the **Diagnostic Review**.
+4. **Refine**: Switch to the **Live Document** tab and use the **Architecture Copilot** to evolve the design!
 
-## Step 3: Running the Frontend
-
-The front end is built with React, Vite, and tailors a robust Enterprise-class, triple-pane interface.
-
-1. Open a new terminal and navigate to the `frontend` directory.
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies (Make sure to run in an administrative shell or bypass Windows execution policies if `npm` acts up):
-   ```bash
-   npm install
-   ```
-3. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
-   *The frontend will now be running at `http://localhost:3000` (or the port specified by Vite, usually `http://localhost:5173`).*
-
-## Usage
-
-1. Open the UI in your browser.
-2. Select an active Groq Model from the dropdown on the left.
-3. Click the Upload Zone on the left pane to submit an Architecture PDF.
-4. Wait for the automated "Diagnostic Review" to populate on the right panel.
-5. Use the Copilot chat window to ask to update the architecture or mandate new system constraints! Toggle the "Live Document" tab to watch your markdown continuously refine.
+---
+*For a deeper dive into the architectural journey of this project, see [blog.md](./blog.md).*
