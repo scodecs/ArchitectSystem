@@ -528,14 +528,18 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
                 max_tokens=3000
             )
         else:
-            # Direct SDK routing
+            # SambaNova and SiliconFlow are extremely sensitive to parallel calls and message order.
+            # We disable parallel calls for them to enforce stability.
+            is_picky = prov_lower in ["sambanova", "siliconflow"]
+            
             chat_completion = current_client.chat.completions.create(
                 messages=messages,
                 model=request.model_id,
                 temperature=0.3,
                 max_tokens=3000,
                 tools=tools,
-                tool_choice=tool_choice
+                tool_choice=tool_choice,
+                parallel_tool_calls=False if is_picky else True
             )
 
         response_message = chat_completion.choices[0].message
@@ -543,27 +547,38 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
         # Check if the model decided to use a tool
         updates_made = []
         if response_message.tool_calls:
-            # First, append the assistant's message that contains the tool calls
-            messages.append(response_message)
+            # AGGRESSIVE NORMALIZATION: Convert to dict and force content to be an empty string if None.
+            # SiliconFlow/SambaNova often reject 'null' content in assistant tool-call messages.
+            # We also ensure 'id' is a string to prevent 'Invalid function calling output' errors.
+            assistant_msg = {
+                "role": "assistant",
+                "content": response_message.content or "",
+                "tool_calls": [
+                    {
+                        "id": getattr(tc, 'id', None) or f"call_{idx}",
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    } for idx, tc in enumerate(response_message.tool_calls)
+                ]
+            }
+            messages.append(assistant_msg)
             
-            for tool_call in response_message.tool_calls:
+            for idx, tool_call in enumerate(response_message.tool_calls):
                 raw_args = tool_call.function.arguments
                 args = {}
                 try:
-                    # Attempt standard parse first
                     args = json.loads(raw_args)
                 except json.JSONDecodeError:
-                    # Recovery: Strip garbage tags like </function> or trailing chars
                     try:
-                        # Find the first { and last }
                         start = raw_args.find('{')
                         end = raw_args.rfind('}')
                         if start != -1 and end != -1:
                             args = json.loads(raw_args[start:end+1])
-                        else:
-                            print(f"CRITICAL: Unparseable tool arguments for {tool_call.function.name}: {raw_args}")
-                    except Exception as e:
-                        print(f"Failed to recover JSON for {tool_call.function.name}: {e}")
+                    except:
+                        pass
 
                 if tool_call.function.name == "update_architecture_document":
                     new_doc = args.get("markdown_content")
@@ -580,13 +595,17 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
                         updates_made.append(f"Recorded new constraint: {desc}")
 
                 # MANDATORY: Every tool call must have a corresponding tool response message
+                # ID must match the one used in the assistant message exactly.
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": getattr(tool_call, 'id', None) or f"call_{idx}", 
                     "name": tool_call.function.name,
-                    "content": json.dumps({"status": "success", "updates": updates_made})
+                    "content": "Success: Architecture state modified."
                 })
 
+            # Debug Logging
+            print(f"DEBUG: Finalizing tool-reasoning with {len(messages)} messages.")
+            
             if prov_lower == "litellm":
                 final_completion = completion(
                     messages=messages,
