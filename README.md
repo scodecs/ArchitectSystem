@@ -50,3 +50,6 @@ npm run dev
 
 ---
 *For a deeper dive into the architectural journey of this project, see [blog.md](./blog.md).*
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
